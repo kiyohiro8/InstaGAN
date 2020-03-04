@@ -1,0 +1,28 @@
+
+common:
+  height: 200
+  width: 200
+
+network:
+  input_channels: 3
+  output_channels: 3
+  norm_layer: instance_norm
+  use_dropout: False
+  num_resblocks: 3
+  padding_type: replicate
+  use_bias: False
+  use_deconv: False
+
+training:
+  max_epoch: 30
+  learning_rate: 0.0002
+  beta1: 0.5
+  lambda_X: 10
+  lambda_Y: 10
+  lambda_idt: 1
+  lambda_ctx: 1
+  X_name: zebra
+  Y_name: giraffe
+  annotation_file: ./data/instances_train2017.json
+  image_dir: ./data/train2017/
+  checkpoint_root: ./result/
