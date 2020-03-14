@@ -3,6 +3,8 @@ import os
 import itertools
 from skimage.io import imsave
 import sys
+from datetime import datetime
+import json
 
 import torch
 from torch.optim import Adam
@@ -13,7 +15,7 @@ from utils import ImagePool, UnalignedImgMaskDataset
 from model import InstaGAN
 import losses
 
-from pytorch_memlab import profile
+
 
 class Trainer():
     def __init__(self, params):
@@ -45,6 +47,18 @@ class Trainer():
         self.fake_X_pool = ImagePool(pool_size)
         self.fake_Y_pool = ImagePool(pool_size)
 
+        dt_now = datetime.now()
+        dt_seq = dt_now.strftime("%y%m%d_%H%M")
+        self.result_dir = os.path.join("./result", f"{dt_seq}_{self.X_name}2{self.Y_name}")
+        self.weight_dir = os.path.join(self.result_dir, "weights")
+        self.sample_dir = os.path.join(self.result_dir, "sample")
+        os.makedirs(self.result_dir, exist_ok=True)
+        os.makedirs(self.weight_dir, exist_ok=True)
+        os.makedirs(self.sample_dir, exist_ok=True)
+        
+        with open(os.path.join(self.result_dir, "params.json"), mode="w") as f:
+            json.dump(params, f)
+
     def train(self):
 
         model = InstaGAN(self.params)
@@ -53,28 +67,26 @@ class Trainer():
         # construct dataloader
         train_dataset = UnalignedImgMaskDataset(X_name=self.X_name, Y_name=self.Y_name, 
                                                 image_dir=self.image_dir, annotation_file=self.annotation_file)
-        train_dataloader = DataLoader(train_dataset, batch_size=1, num_workers=2) 
+        train_dataloader = DataLoader(train_dataset, batch_size=1, num_workers=4) 
 
         # construct optimizers
         optimizer_G = Adam(filter(lambda p: p.requires_grad, itertools.chain(model.G_XY.parameters(), model.G_YX.parameters())),
                            lr=self.learning_rate,
                            betas=(self.beta1, 0.999))
         optimizer_D_X = Adam(model.D_X.parameters(),
-                            lr=self.learning_rate*5, 
+                            lr=self.learning_rate, 
                             betas=(self.beta1, 0.999))
         optimizer_D_Y = Adam(model.D_Y.parameters(),
-                    lr=self.learning_rate*5, 
+                    lr=self.learning_rate, 
                     betas=(self.beta1, 0.999))
         # training roop
 
-        criterionGAN = losses.LSGAN()
-        criterionCyc = torch.nn.L1Loss()
-        criterionIdt = torch.nn.L1Loss()
-        criterionCtx = losses.WeightedL1Loss()
+        criterionGAN = losses.LSGAN().to(self.device)
+        criterionCyc = torch.nn.L1Loss().to(self.device)
+        criterionIdt = torch.nn.L1Loss().to(self.device)
+        criterionCtx = losses.WeightedL1Loss().to(self.device)
         ins_iter = self.ins_max // self.ins_per
 
-        result_dir = "./result/test/"
-        os.makedirs(result_dir, exist_ok=True)
         for epoch in range(1, self.max_epoch + 1):
             print(f"epoch {epoch} start")
             for batch in train_dataloader:
@@ -104,6 +116,8 @@ class Trainer():
                         continue
 
                     if remain_instance_X:
+                        mask_existence = masks_X.sum(0).sum(-1).sum(-1)
+                        masks_X = masks_X[:, torch.where(mask_existence > 0)[0], :, :]
                         temp_real_image_mask_X = torch.cat([real_image_X, masks_X], dim=1)
                         fake_image_mask_Y = model.G_XY(temp_real_image_mask_X)
                         fake_image_Y = fake_image_mask_Y[:, :3, :, :]
@@ -111,6 +125,8 @@ class Trainer():
                         rec_image_mask_X = model.G_YX(fake_image_mask_Y)
 
                     if remain_instance_Y:
+                        mask_existence = masks_Y.sum(0).sum(-1).sum(-1)
+                        masks_Y = masks_Y[:, torch.where(mask_existence > 0)[0], :, :]
                         temp_real_image_mask_Y = torch.cat([real_image_Y, masks_Y], dim=1)
                         fake_image_mask_X = model.G_YX(temp_real_image_mask_Y)
                         fake_image_X = fake_image_mask_X[:, :3, :, :]
@@ -158,28 +174,22 @@ class Trainer():
                                        
                     # Update Discriminators
 
-                    fake_image_X = fake_image_X.detach()
-                    fake_image_Y = fake_image_Y.detach()
-                    fake_masks_X = fake_masks_X.detach()
-                    fake_masks_Y = fake_masks_Y.detach()
+                    if remain_instance_Y:
+                        fake_image_X = fake_image_X.detach()
+                        real_image_Y = fake_image_X
+                        fake_masks_X = fake_masks_X.detach()
+                        fake_mask_X_list.append(fake_masks_X)
+                        fake_image_mask_X = torch.cat([fake_image_X, *fake_mask_X_list], dim=1)
+                        fake_image_mask_X_D = self.fake_X_pool.query(fake_image_mask_X)
 
-                    fake_mask_X_list.append(fake_masks_X)
-                    fake_mask_Y_list.append(fake_masks_Y)
+                    if remain_instance_X:
+                        fake_image_Y = fake_image_Y.detach()
+                        real_image_X = fake_image_Y
+                        fake_masks_Y = fake_masks_Y.detach()
+                        fake_mask_Y_list.append(fake_masks_Y)
+                        fake_image_mask_Y = torch.cat([fake_image_Y, *fake_mask_Y_list], dim=1)
+                        fake_image_mask_Y_D = self.fake_Y_pool.query(fake_image_mask_Y)
 
-                    fake_image_mask_X = torch.cat([fake_image_X, *fake_mask_X_list], dim=1)
-                    fake_image_mask_Y = torch.cat([fake_image_Y, *fake_mask_Y_list], dim=1)
-
-                    #rec_image_masks_X = rec_image_mask_X.detach()
-                    #rec_image_masks_Y = rec_image_mask_Y.detach()
-                    
-                    #fake_image_mask_X = fake_image_mask_X.to("cpu")
-                    #fake_image_mask_Y = fake_image_mask_Y.to("cpu")
-
-                    fake_image_mask_X_D = self.fake_X_pool.query(fake_image_mask_X)
-                    fake_image_mask_Y_D = self.fake_Y_pool.query(fake_image_mask_Y)
-
-                    #fake_image_mask_X = fake_image_mask_X.to(self.device)
-                    #fake_image_mask_Y = fake_image_mask_Y.to(self.device)
                     
                     if remain_instance_Y:
                         optimizer_D_X.zero_grad()
@@ -197,13 +207,88 @@ class Trainer():
 
                     print(f"loss_D_X: {loss_D_X:.4f}, loss_D_Y: {loss_D_Y:.4f}, loss_G: {loss_G:.4f}")
 
-                    # detach all images and masks
-                    real_images_X = fake_image_X
-                    real_images_Y = fake_image_Y
-                    #rec_mask_X_list.append(rec_masks_X)
-                    #rec_mask_Y_list.append(rec_masks_Y)
             
-            
+            if len(train_dataset.test_Ids_X) > 0:
+                for idx in range(len(train_dataset.test_Ids_X)):
+                    image_masks = train_dataset.get_test_data(idx, "X")
+                    image_masks = image_masks.to(self.device)
+
+                    image = image_masks[:, :3, :, :]
+                    masks = image_masks[:, 3:, :, :]
+                    _, n_masks, _, _ = masks.size()
+                    #ins_iter = n_masks // self.ins_per
+                    fake_mask_list = []
+
+                    for i in range(n_masks):
+                        temp_masks = masks[:, i:i+1, :, :]
+                        temp_real_image_mask = torch.cat([image, temp_masks], dim=1)
+                        with torch.no_grad():
+                            fake_image_mask = model.G_XY(temp_real_image_mask)
+                        fake_image = fake_image_mask[:, :3, :, :]
+                        fake_masks = fake_image_mask[:, 3:, :, :]
+                        image = fake_image
+                        fake_mask_list.append(fake_masks)
+                    
+                    real_image = image_masks[:, :3, :, :]
+                    fake_image = fake_image_mask[:, :3, :, :]
+                    real_image = real_image.to("cpu").numpy()
+                    fake_image = fake_image.to("cpu").numpy()
+                    h, w = real_image.shape[2:]
+                    result_image = np.zeros((3, 2*h, 2*w))
+                    result_image[:, :h, :w] = real_image
+                    result_image[:, :h, w:2*w] = fake_image
+                    result_image = (result_image + 1) * 127.5
+                    real_mask = masks.sum(dim=1).to("cpu").numpy() * 255
+                    fake_mask = torch.cat([*fake_mask_list], dim=1)
+                    fake_mask = fake_mask.sum(dim=1).to("cpu").numpy() * 255
+                    result_image[:, h:2*h, :w] = real_mask
+                    result_image[:, h:2*h, w:2*w] = fake_mask
+                    result_image = np.transpose(result_image, (1, 2, 0))
+                    result_image = result_image.astype(np.uint8)
+                    sample_image_file = f"{self.sample_dir}/{epoch}_{self.X_name}2{self.Y_name}_{idx}.png"
+                    imsave(sample_image_file, result_image)
+
+            if len(train_dataset.test_Ids_Y) > 0:
+                for idx in range(len(train_dataset.test_Ids_Y)):
+                    image_masks = train_dataset.get_test_data(idx, "Y")
+                    image_masks = image_masks.to(self.device)
+
+                    image = image_masks[:, :3, :, :]
+                    masks = image_masks[:, 3:, :, :]
+                    _, n_masks, _, _ = masks.size()
+                    #ins_iter = n_masks // self.ins_per
+                    fake_mask_list = []
+
+                    for i in range(n_masks):
+                        temp_masks = masks[:, i:i+1, :, :]
+                        temp_real_image_mask = torch.cat([image, temp_masks], dim=1)
+                        with torch.no_grad():
+                            fake_image_mask = model.G_YX(temp_real_image_mask)
+                        fake_image = fake_image_mask[:, :3, :, :]
+                        fake_masks = fake_image_mask[:, 3:, :, :]
+                        image = fake_image
+                        fake_mask_list.append(fake_masks)
+                    
+                    real_image = image_masks[:, :3, :, :]
+                    fake_image = fake_image_mask[:, :3, :, :]
+                    real_image = real_image.to("cpu").numpy()
+                    fake_image = fake_image.to("cpu").numpy()
+                    h, w = real_image.shape[2:]
+                    result_image = np.zeros((3, 2*h, 2*w))
+                    result_image[:, :h, :w] = real_image
+                    result_image[:, :h, w:2*w] = fake_image
+                    result_image = (result_image + 1) * 127.5
+                    real_mask = masks.sum(dim=1).to("cpu").numpy() * 255
+                    fake_mask = torch.cat([*fake_mask_list], dim=1)
+                    fake_mask = fake_mask.sum(dim=1).to("cpu").numpy() * 255
+                    result_image[:, h:2*h, :w] = real_mask
+                    result_image[:, h:2*h, w:2*w] = fake_mask
+                    result_image = np.transpose(result_image, (1, 2, 0))
+                    result_image = result_image.astype(np.uint8)
+                    sample_image_file = f"{self.sample_dir}/{epoch}_{self.Y_name}2{self.X_name}_{idx}.png"
+                    imsave(sample_image_file, result_image)
+
+
             real_images_X = real_image_mask_X[:, :3, :, :].to("cpu").numpy()
             real_images_Y = real_image_mask_Y[:, :3, :, :].to("cpu").numpy()
             fake_image_X = fake_image_X.to("cpu").numpy()
@@ -225,17 +310,27 @@ class Trainer():
             fake_mask_X = fake_mask_X.sum(dim=1).to("cpu").numpy() * 255
             fake_mask_Y = fake_mask_Y.sum(dim=1).to("cpu").numpy() * 255
             
-            result_image[0, :h, 2*w:3*w] = real_mask_X
-            result_image[0, :h, 3*w:4*w] = fake_mask_Y
-            result_image[0, h:2*h, 2*w:3*w] = real_mask_Y
-            result_image[0, h:2*h, 3*w:4*w] = fake_mask_X
+            result_image[:, :h, 2*w:3*w] = real_mask_X
+            result_image[:, :h, 3*w:4*w] = fake_mask_Y
+            result_image[:, h:2*h, 2*w:3*w] = real_mask_Y
+            result_image[:, h:2*h, 3*w:4*w] = fake_mask_X
 
             result_image = np.transpose(result_image, (1, 2, 0))
             result_image = result_image.astype(np.uint8)
-            sample_image_file = f"{result_dir}/{epoch}.png"
+            sample_image_file = f"{self.sample_dir}/{epoch}.png"
             imsave(sample_image_file, result_image)
-            torch.save(model.G_XY.state_dict(), f"{result_dir}/{epoch}_{self.X_name}2{self.Y_name}.pth")
-            torch.save(model.G_YX.state_dict(), f"{result_dir}/{epoch}_{self.Y_name}2{self.X_name}.pth")
+
+            #if epoch % 5 == 0:
+            torch.save(model.G_XY.state_dict(), f"{self.weight_dir}/{epoch}_{self.X_name}2{self.Y_name}.pth")
+            torch.save(model.G_YX.state_dict(), f"{self.weight_dir}/{epoch}_{self.Y_name}2{self.X_name}.pth")
+            torch.save(model.D_X.state_dict(), f"{self.weight_dir}/{epoch}_dis_{self.X_name}.pth")
+            torch.save(model.D_Y.state_dict(), f"{self.weight_dir}/{epoch}_dis_{self.Y_name}.pth")
+            torch.save(optimizer_G.state_dict(), f"{self.weight_dir}/{epoch}_opt_G.pth")
+            torch.save(optimizer_D_X.state_dict(), f"{self.weight_dir}/{epoch}_opt_D_{self.X_name}.pth")
+            torch.save(optimizer_D_Y.state_dict(), f"{self.weight_dir}/{epoch}_opt_D_{self.Y_name}.pth")
+
+
+            train_dataloader.dataset.shuffle()
 
 
     def get_weight_for_ctx(self, x, y):

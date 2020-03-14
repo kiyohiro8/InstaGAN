@@ -3,7 +3,6 @@
 import os
 from glob import glob
 import random
-import random
 import time
 import datetime
 import sys
@@ -20,19 +19,32 @@ from torch.utils.data import Dataset
 from PIL import Image
 import torchvision.transforms as transforms
 
+
 class UnalignedImgMaskDataset(object):
-    def __init__(self, X_name, Y_name, image_dir, annotation_file, simple_resize=True):
+    def __init__(self, X_name, Y_name, image_dir, annotation_file, simple_resize=True, test_size=10):
         # annotationsの読み込み
         # imageへのpathとマスク情報を格納した辞書のリストを作成
         self.coco = COCO(annotation_file)
 
         self.category_ids_X = self.coco.getCatIds(catNms=[X_name])
         self.category_ids_Y = self.coco.getCatIds(catNms=[Y_name])
-        self.Ids_X = self.coco.getImgIds(catIds=self.category_ids_X)
-        self.Ids_Y = self.coco.getImgIds(catIds=self.category_ids_Y)
-        intersection = set(self.Ids_X) & set(self.Ids_Y)
-        self.Ids_X = list(set(self.Ids_X) - intersection)
-        self.Ids_Y = list(set(self.Ids_Y) - intersection)
+        Ids_X = self.coco.getImgIds(catIds=self.category_ids_X)
+        Ids_Y = self.coco.getImgIds(catIds=self.category_ids_Y)
+        intersection = set(Ids_X) & set(Ids_Y)
+        Ids_X = list(set(Ids_X) - intersection)
+        Ids_Y = list(set(Ids_Y) - intersection)
+
+        self.Ids_X = Ids_X[test_size:]
+        self.Ids_Y = Ids_Y[test_size:]
+        self.test_size = test_size
+        if self.test_size <= len(self.Ids_X) // 10 and test_size <= len(self.Ids_Y) // 10:
+            self.test_Ids_X = Ids_X[:test_size]
+            self.test_Ids_Y = Ids_Y[:test_size]
+        else:
+            self.test_Ids_X = []
+            self.test_Ids_Y = []
+            print("No test images.")
+
         print(f"{len(self.Ids_X)} images for {X_name}.")
         print(f"{len(self.Ids_Y)} images for {Y_name}.")
         # transformsの定義
@@ -107,8 +119,47 @@ class UnalignedImgMaskDataset(object):
 
     def __len__(self):
         return min(len(self.Ids_X), len(self.Ids_Y))
+    
+    def shuffle(self):
+        random.shuffle(self.Ids_X)
+        random.shuffle(self.Ids_Y)
+
+    def get_test_data(self, idx, domain):
+        assert domain in ["X", "Y"]
+
+        if domain == "X":
+            annotation = self.coco.loadImgs(self.test_Ids_X[idx])[0]
+        else:
+            annotation = self.coco.loadImgs(self.test_Ids_Y[idx])[0]
+        
+        image = imread(os.path.join(self.image_dir, annotation["file_name"]))
+        image_id = annotation["id"]
+        
+        if domain == "X":
+            annotation_ids = self.coco.getAnnIds(imgIds=image_id, catIds=self.category_ids_X)
+        else:
+            annotation_ids = self.coco.getAnnIds(imgIds=image_id, catIds=self.category_ids_Y)
+
+        anns = self.coco.loadAnns(annotation_ids)
+        masks = [self.coco.annToMask(instance) for instance in anns]
+        
+        h, w, c = image.shape
 
 
+        image = resize(image, output_shape=(200, 200, 3))
+        masks = [resize(mask, output_shape=(200, 200), anti_aliasing=False, preserve_range=True) for mask in masks]
+
+            
+        image = (torch.FloatTensor(image.copy()) - 0.5) * 2
+        masks = [torch.FloatTensor(mask.copy()) for mask in masks]
+
+        image = np.transpose(image, (2, 0, 1))
+        masks = torch.stack(masks)
+
+        image_mask = torch.cat([image, masks], axis=0)
+        return image_mask.unsqueeze(0)
+
+        
 class SimpleResize(object):
     def __init__(self, image_size):
         self.image_size = image_size
