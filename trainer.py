@@ -20,7 +20,6 @@ import losses
 class Trainer():
     def __init__(self, params):
         self.params = params
-        common_params = params["common"]
         training_params = params["training"]
 
         self.max_epoch = training_params["max_epoch"]
@@ -36,7 +35,6 @@ class Trainer():
         self.ins_per = 2
         self.checkpoint_root = training_params["checkpoint_root"]
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        #self.device = torch.device("cpu")
 
         self.lambda_X = training_params["lambda_X"]
         self.lambda_Y = training_params["lambda_Y"]
@@ -59,13 +57,13 @@ class Trainer():
         with open(os.path.join(self.result_dir, "params.json"), mode="w") as f:
             json.dump(params, f)
 
-    def train(self):
+    def train(self, resume_from=False):
 
         model = InstaGAN(self.params)
         model.cast_device(self.device)
 
         # construct dataloader
-        train_dataset = UnalignedImgMaskDataset(X_name=self.X_name, Y_name=self.Y_name, 
+        train_dataset = UnalignedImgMaskDataset(X_name=self.X_name, Y_name=self.Y_name, simple_resize=False,
                                                 image_dir=self.image_dir, annotation_file=self.annotation_file)
         train_dataloader = DataLoader(train_dataset, batch_size=1, num_workers=4) 
 
@@ -74,12 +72,30 @@ class Trainer():
                            lr=self.learning_rate,
                            betas=(self.beta1, 0.999))
         optimizer_D_X = Adam(model.D_X.parameters(),
-                            lr=self.learning_rate, 
+                            lr=self.learning_rate*5, 
                             betas=(self.beta1, 0.999))
         optimizer_D_Y = Adam(model.D_Y.parameters(),
-                    lr=self.learning_rate, 
+                    lr=self.learning_rate*5, 
                     betas=(self.beta1, 0.999))
-        # training roop
+
+        start_epoch = 1
+        
+        # resume
+        if resume_from:
+            file_list = os.listdir(f"{resume_from}/weights")
+            epoch_list = list(set([int(file.split("_")[0]) for file in file_list]))
+            latest_epoch = max(epoch_list)
+            start_epoch = latest_epoch + 1
+            self.max_epoch += latest_epoch
+            print(f"Resume training from {resume_from} at epoch {start_epoch}")
+            model.G_XY.load_state_dict(torch.load(f"{resume_from}/weights/{latest_epoch}_{self.X_name}2{self.Y_name}.pth"))
+            model.G_YX.load_state_dict(torch.load(f"{resume_from}/weights/{latest_epoch}_{self.Y_name}2{self.X_name}.pth"))
+            model.D_X.load_state_dict(torch.load(f"{resume_from}/weights/{latest_epoch}_dis_{self.X_name}.pth"))
+            model.D_Y.load_state_dict(torch.load(f"{resume_from}/weights/{latest_epoch}_dis_{self.Y_name}.pth"))
+            optimizer_G.load_state_dict(torch.load(f"{resume_from}/weights/{latest_epoch}_opt_G.pth"))
+            optimizer_D_X.load_state_dict(torch.load(f"{resume_from}/weights/{latest_epoch}_opt_D_{self.X_name}.pth"))
+            optimizer_D_Y.load_state_dict(torch.load(f"{resume_from}/weights/{latest_epoch}_opt_D_{self.Y_name}.pth"))
+
 
         criterionGAN = losses.LSGAN().to(self.device)
         criterionCyc = torch.nn.L1Loss().to(self.device)
@@ -87,10 +103,10 @@ class Trainer():
         criterionCtx = losses.WeightedL1Loss().to(self.device)
         ins_iter = self.ins_max // self.ins_per
 
-        for epoch in range(1, self.max_epoch + 1):
+        # training roop
+        for epoch in range(start_epoch, self.max_epoch + 1):
             print(f"epoch {epoch} start")
             for batch in train_dataloader:
-                #batch = train_dataset.getitem(idx)
                 real_image_mask_X, real_image_mask_Y= self.cast_device(batch)
                 real_image_X = real_image_mask_X[:, :3, :, :]
                 real_image_Y = real_image_mask_Y[:, :3, :, :]
@@ -99,15 +115,10 @@ class Trainer():
 
                 fake_mask_X_list = []
                 fake_mask_Y_list = []
-                rec_mask_X_list = []
-                rec_mask_Y_list = []
-
                 
                 for i in range(ins_iter):
-                    #i 番目のインスタンスセットに関する変換
                     masks_X = real_masks_X[:, self.ins_per*i:self.ins_per*(i+1), :, :]
                     masks_Y = real_masks_Y[:, self.ins_per*i:self.ins_per*(i+1), :, :]
-                    #empty = - torch.ones(real_mask_X).to(self.device)
 
                     remain_instance_X = (masks_X.to("cpu").numpy()).sum() > 0
                     remain_instance_Y = (masks_Y.to("cpu").numpy()).sum() > 0
@@ -116,8 +127,6 @@ class Trainer():
                         continue
 
                     if remain_instance_X:
-                        mask_existence = masks_X.sum(0).sum(-1).sum(-1)
-                        masks_X = masks_X[:, torch.where(mask_existence > 0)[0], :, :]
                         temp_real_image_mask_X = torch.cat([real_image_X, masks_X], dim=1)
                         fake_image_mask_Y = model.G_XY(temp_real_image_mask_X)
                         fake_image_Y = fake_image_mask_Y[:, :3, :, :]
@@ -125,22 +134,21 @@ class Trainer():
                         rec_image_mask_X = model.G_YX(fake_image_mask_Y)
 
                     if remain_instance_Y:
-                        mask_existence = masks_Y.sum(0).sum(-1).sum(-1)
-                        masks_Y = masks_Y[:, torch.where(mask_existence > 0)[0], :, :]
                         temp_real_image_mask_Y = torch.cat([real_image_Y, masks_Y], dim=1)
                         fake_image_mask_X = model.G_YX(temp_real_image_mask_Y)
                         fake_image_X = fake_image_mask_X[:, :3, :, :]
                         fake_masks_X = fake_image_mask_X[:, 3:, :, :]
                         rec_image_mask_Y = model.G_XY(fake_image_mask_X)
 
-                    
+                    #
                     # Update Generators
+                    #
                     optimizer_G.zero_grad()
 
                     if remain_instance_X:
                         loss_G_XY = criterionGAN(model.D_Y(torch.cat([fake_image_mask_Y, *fake_mask_Y_list], dim=1)), is_real=True)
                         loss_cyc_XYX = criterionCyc(rec_image_mask_X, temp_real_image_mask_X)
-                        loss_idt_X = criterionIdt(model.G_YX(temp_real_image_mask_X), temp_real_image_mask_X) #★Idt lossの計算式見直す
+                        loss_idt_X = criterionIdt(model.G_YX(temp_real_image_mask_X), temp_real_image_mask_X) 
                         weight_X = self.get_weight_for_ctx(masks_X, fake_masks_Y) 
                         loss_ctx_XY = criterionCtx(real_image_X, fake_image_Y, weight=weight_X)
                     else:
@@ -171,9 +179,8 @@ class Trainer():
                         optimizer_G.step()
                         loss_G = loss_G.item()
 
-                                       
-                    # Update Discriminators
 
+                    # Prepare next roop
                     if remain_instance_Y:
                         fake_image_X = fake_image_X.detach()
                         real_image_Y = fake_image_X
@@ -190,7 +197,9 @@ class Trainer():
                         fake_image_mask_Y = torch.cat([fake_image_Y, *fake_mask_Y_list], dim=1)
                         fake_image_mask_Y_D = self.fake_Y_pool.query(fake_image_mask_Y)
 
-                    
+                    #                
+                    # Update Discriminators
+                    #
                     if remain_instance_Y:
                         optimizer_D_X.zero_grad()
                         loss_D_X = 0.5 * (criterionGAN(model.D_X(temp_real_image_mask_X), is_real=True) + criterionGAN(model.D_X(fake_image_mask_X_D), is_real=False))
@@ -207,7 +216,21 @@ class Trainer():
 
                     print(f"loss_D_X: {loss_D_X:.4f}, loss_D_Y: {loss_D_Y:.4f}, loss_G: {loss_G:.4f}")
 
-            
+            # Save weights
+            #if epoch % 5 == 0:
+            torch.save(model.G_XY.state_dict(), f"{self.weight_dir}/{epoch}_{self.X_name}2{self.Y_name}.pth")
+            torch.save(model.G_YX.state_dict(), f"{self.weight_dir}/{epoch}_{self.Y_name}2{self.X_name}.pth")
+            torch.save(model.D_X.state_dict(), f"{self.weight_dir}/{epoch}_dis_{self.X_name}.pth")
+            torch.save(model.D_Y.state_dict(), f"{self.weight_dir}/{epoch}_dis_{self.Y_name}.pth")
+            torch.save(optimizer_G.state_dict(), f"{self.weight_dir}/{epoch}_opt_G.pth")
+            torch.save(optimizer_D_X.state_dict(), f"{self.weight_dir}/{epoch}_opt_D_{self.X_name}.pth")
+            torch.save(optimizer_D_Y.state_dict(), f"{self.weight_dir}/{epoch}_opt_D_{self.Y_name}.pth")
+
+            train_dataloader.dataset.shuffle()
+
+            #
+            # Generate sample images
+            #
             if len(train_dataset.test_Ids_X) > 0:
                 for idx in range(len(train_dataset.test_Ids_X)):
                     image_masks = train_dataset.get_test_data(idx, "X")
@@ -216,7 +239,6 @@ class Trainer():
                     image = image_masks[:, :3, :, :]
                     masks = image_masks[:, 3:, :, :]
                     _, n_masks, _, _ = masks.size()
-                    #ins_iter = n_masks // self.ins_per
                     fake_mask_list = []
 
                     for i in range(n_masks):
@@ -256,7 +278,6 @@ class Trainer():
                     image = image_masks[:, :3, :, :]
                     masks = image_masks[:, 3:, :, :]
                     _, n_masks, _, _ = masks.size()
-                    #ins_iter = n_masks // self.ins_per
                     fake_mask_list = []
 
                     for i in range(n_masks):
@@ -297,10 +318,8 @@ class Trainer():
             result_image = np.zeros((3, 2*h, 4*w))
             result_image[:, :h, :w] = real_images_X[0, :, :, :]
             result_image[:, :h, w:2*w] = fake_image_Y[0, :, :, :]
-            #result_image[:, :h, 2*w:] = rec_image_X[0, :, :, :]
             result_image[:, h:2*h, :w] = real_images_Y[0, :, :, :]
             result_image[:, h:2*h, w:2*w] = fake_image_X[0, :, :, :]
-            #result_image[:, h*2*h, 2*w:3*w] = rec_image_Y[0, :, :, :]
 
             result_image = (result_image + 1) * 127.5
             real_mask_X = real_image_mask_X[:, 3:, :, :].sum(dim=1).to("cpu").numpy() * 255
@@ -319,19 +338,6 @@ class Trainer():
             result_image = result_image.astype(np.uint8)
             sample_image_file = f"{self.sample_dir}/{epoch}.png"
             imsave(sample_image_file, result_image)
-
-            #if epoch % 5 == 0:
-            torch.save(model.G_XY.state_dict(), f"{self.weight_dir}/{epoch}_{self.X_name}2{self.Y_name}.pth")
-            torch.save(model.G_YX.state_dict(), f"{self.weight_dir}/{epoch}_{self.Y_name}2{self.X_name}.pth")
-            torch.save(model.D_X.state_dict(), f"{self.weight_dir}/{epoch}_dis_{self.X_name}.pth")
-            torch.save(model.D_Y.state_dict(), f"{self.weight_dir}/{epoch}_dis_{self.Y_name}.pth")
-            torch.save(optimizer_G.state_dict(), f"{self.weight_dir}/{epoch}_opt_G.pth")
-            torch.save(optimizer_D_X.state_dict(), f"{self.weight_dir}/{epoch}_opt_D_{self.X_name}.pth")
-            torch.save(optimizer_D_Y.state_dict(), f"{self.weight_dir}/{epoch}_opt_D_{self.Y_name}.pth")
-
-
-            train_dataloader.dataset.shuffle()
-
 
     def get_weight_for_ctx(self, x, y):
         z = torch.cat([x, y], dim=1)

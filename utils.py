@@ -21,7 +21,7 @@ import torchvision.transforms as transforms
 
 
 class UnalignedImgMaskDataset(object):
-    def __init__(self, X_name, Y_name, image_dir, annotation_file, simple_resize=True, test_size=10):
+    def __init__(self, X_name, Y_name, image_dir, annotation_file, simple_resize=True, test_size=20):
         # annotationsの読み込み
         # imageへのpathとマスク情報を格納した辞書のリストを作成
         self.coco = COCO(annotation_file)
@@ -47,23 +47,30 @@ class UnalignedImgMaskDataset(object):
 
         print(f"{len(self.Ids_X)} images for {X_name}.")
         print(f"{len(self.Ids_Y)} images for {Y_name}.")
+
+        self.image_dir = image_dir
+        self.max_instances = 4
+        self.image_size = 128
+
         # transformsの定義
         if simple_resize:
-            self.transforms = [SimpleResize(image_size=200),
+            self.spatial_transforms = [SimpleResize(image_size=self.image_size),
                                ToTensor()]
         else:
-            self.transforms = [ResizeRandomCrip(image_size=300),
+            self.spatial_transforms = [ResizeRandomCrip(image_size=self.image_size),
                             RandomFlip(),
                             ToTensor()]
-        self.image_dir = image_dir
-        self.max_instances = 8
-        self.image_size = 200
+
+        self.color_transforms = transforms.Compose([transforms.ColorJitter(brightness=0.05, contrast=0.05)])
+
     
     def __getitem__(self, idx):
         annotation_X = self.coco.loadImgs(self.Ids_X[idx])[0]
         annotation_Y = self.coco.loadImgs(self.Ids_Y[idx])[0]
-        image_X = imread(os.path.join(self.image_dir, annotation_X["file_name"]))
-        image_Y = imread(os.path.join(self.image_dir, annotation_Y["file_name"]))
+        image_X = Image.open(os.path.join(self.image_dir, annotation_X["file_name"]))
+        image_Y = Image.open(os.path.join(self.image_dir, annotation_Y["file_name"]))
+        #image_X = imread(os.path.join(self.image_dir, annotation_X["file_name"]))
+        #image_Y = imread(os.path.join(self.image_dir, annotation_Y["file_name"]))
         #image_X = np.transpose(image_X, (2, 0, 1))
         #image_Y = np.transpose(image_Y, (2, 0, 1))
 
@@ -84,24 +91,28 @@ class UnalignedImgMaskDataset(object):
         random.shuffle(masks_Y)
         if len(masks_Y) > self.max_instances:
             masks_Y = masks_Y[:self.max_instances]
-        """
-        if len(self.transforms) > 0:
-            for transform in self.transforms:
+
+        image_X = np.asarray(self.color_transforms(image_X))
+        image_Y = np.asarray(self.color_transforms(image_Y))
+
+        if len(self.spatial_transforms) > 0:
+            for transform in self.spatial_transforms:
                 image_X, masks_X = transform(image_X, masks_X)
                 image_Y, masks_Y = transform(image_Y, masks_Y)
         """
-        image_X = resize(image_X, output_shape=(200, 200, 3))
-        masks_X = [resize(mask, output_shape=(200, 200), anti_aliasing=False, preserve_range=True) for mask in masks_X]
-        image_Y = resize(image_Y, output_shape=(200, 200, 3))
-        masks_Y = [resize(mask, output_shape=(200, 200), anti_aliasing=False, preserve_range=True) for mask in masks_Y]
+        image_X = resize(image_X, output_shape=(self.image_size, self.image_size, 3))
+        masks_X = [resize(mask, output_shape=(self.image_size, self.image_size), anti_aliasing=False, preserve_range=True) for mask in masks_X]
+        image_Y = resize(image_Y, output_shape=(self.image_size, self.image_size, 3))
+        masks_Y = [resize(mask, output_shape=(self.image_size, self.image_size), anti_aliasing=False, preserve_range=True) for mask in masks_Y]
 
         image_X = (torch.FloatTensor(image_X.copy()) - 0.5) * 2
         masks_X = [torch.FloatTensor(mask.copy()) for mask in masks_X]
         image_Y = (torch.FloatTensor(image_Y.copy()) - 0.5) * 2
         masks_Y = [torch.FloatTensor(mask.copy()) for mask in masks_Y]
-
         image_X = np.transpose(image_X, (2, 0, 1))
         image_Y = np.transpose(image_Y, (2, 0, 1))
+        """
+
 
         mask_tensor_X = torch.zeros((self.max_instances, self.image_size, self.image_size))
         mask_tensor_Y = torch.zeros((self.max_instances, self.image_size, self.image_size))
@@ -142,12 +153,10 @@ class UnalignedImgMaskDataset(object):
 
         anns = self.coco.loadAnns(annotation_ids)
         masks = [self.coco.annToMask(instance) for instance in anns]
-        
-        h, w, c = image.shape
 
 
-        image = resize(image, output_shape=(200, 200, 3))
-        masks = [resize(mask, output_shape=(200, 200), anti_aliasing=False, preserve_range=True) for mask in masks]
+        image = resize(image, output_shape=(self.image_size, self.image_size, 3))
+        masks = [resize(mask, output_shape=(self.image_size, self.image_size), anti_aliasing=False, preserve_range=True) for mask in masks]
 
             
         image = (torch.FloatTensor(image.copy()) - 0.5) * 2
@@ -166,9 +175,7 @@ class SimpleResize(object):
     
     def __call__(self, image, masks):
         image = resize(image, output_shape=(self.image_size, self.image_size, 3))
-        masks = [resize(mask, output_shape=(self.image_size, self.image_size, 1)) for mask in masks]
-        for mask in masks:
-            print(mask.sum())
+        masks = [resize(mask, output_shape=(self.image_size, self.image_size), anti_aliasing=False, preserve_range=True) for mask in masks]
         return image, masks
     
 
@@ -178,6 +185,9 @@ class ResizeRandomCrip(object):
 
     def __call__(self, image, masks):
 
+        image = resize(image, output_shape=(int(self.image_size*1.2), int(self.image_size*1.2), 3))
+        masks = [resize(mask, output_shape=(int(self.image_size*1.2), int(self.image_size*1.2)), anti_aliasing=False, preserve_range=True) for mask in masks]
+        """
         c, h, w = image.shape
         areas = [np.sum(mask) for mask in masks]
         if h < w:
@@ -185,31 +195,17 @@ class ResizeRandomCrip(object):
         else:
             output_shape = (3, int(h * self.image_size / w), self.image_size)
         image = resize(image, output_shape=output_shape)
-        masks = [resize(mask, output_shape=(1,)+output_shape[1:]) for mask in masks]
-        area_ratio = [image.shape[1] * image.shape[2] / h / w * area for area in areas]
+        masks = [resize(mask, output_shape=(1,)+output_shape[1:], anti_aliasing=False, preserve_range=True) for mask in masks]
+        #area_ratio = [image.shape[1] * image.shape[2] / h / w * area for area in areas]
+        """
+        th = np.random.randint(0, 1.2*self.image_size - self.image_size)
+        tw = np.random.randint(0, 1.2*self.image_size - self.image_size)
 
-        c, h, w = image.shape
+        image = image[th:th+self.image_size, tw:tw+self.image_size, :]
+        masks = [mask[th:th+self.image_size, tw:tw+self.image_size] for mask in masks]
 
 
-        mask_list = []
-        while not mask_list:
-            if h != self.image_size:
-                th = np.random.randint(0, h - self.image_size)
-            else:
-                th = 0
-            if w != self.image_size:
-                tw = np.random.randint(0, w - self.image_size)
-            else:
-                tw = 0
-
-            temp_image = image[:, th:th+self.image_size, tw:tw+self.image_size]
-            temp_masks = [mask[:, th:th+self.image_size, tw:tw+self.image_size] for mask in masks]
-
-            for i, mask in enumerate(temp_masks):
-                if np.sum(mask) < area_ratio[i] / 3:
-                    mask_list.append(mask)
-
-        return temp_image, mask_list
+        return image, masks
 
 
 class RandomFlip(object):
@@ -220,7 +216,7 @@ class RandomFlip(object):
         if self.p < np.random.rand():
             return image, masks
         else:
-            image = np.flip(image, 2)
+            image = np.flip(image, 1)
             masks = [np.flip(mask, 1) for mask in masks]
             return image, masks
 
@@ -229,10 +225,9 @@ class ToTensor(object):
         pass
 
     def __call__(self, image, masks):
-        image = torch.FloatTensor(image.copy())
+        image = np.transpose(image, (2, 0, 1))
+        image = (torch.FloatTensor(image.copy()) - 0.5) *2
         masks = [torch.FloatTensor(mask.copy()) for mask in masks]
-        for mask in masks:
-            print(mask.sum())
         return image, masks
 
 class ImagePool():

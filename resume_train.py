@@ -9,13 +9,15 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("param_file")
+    parser.add_argument("resume_from")
 
     args = parser.parse_args()
 
-    with open(args.param_file, "r") as f:
+    param_file = f"{args.resume_from}/params.json" 
+
+    with open(param_file, "r") as f:
         params = yaml.load(f, Loader=yaml.SafeLoader)
 
     trainer = Trainer(params)
 
-    trainer.train()
+    trainer.train(resume_from=args.resume_from)

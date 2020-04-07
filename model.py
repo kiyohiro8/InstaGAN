@@ -10,7 +10,6 @@ class InstaGAN(object):
         super(InstaGAN, self).__init__()
 
         network_params = params["network"]
-        common_params = params["common"]
 
         input_nc = network_params["input_channels"]
         output_nc = network_params["output_channels"]
@@ -21,11 +20,9 @@ class InstaGAN(object):
         elif norm_layer_name == "instance_norm":
             norm_layer = nn.InstanceNorm2d
         use_dropout = network_params["use_dropout"]
-        n_blocks = network_params["num_resblocks"]
         padding_type = network_params["padding_type"]
         assert padding_type in ["reflect", "replicate", "zeros"]
-        use_bias = network_params["use_bias"]
-        use_deconv = network_params["use_deconv"]
+
         self.G_XY = Generator(input_nc, output_nc, norm_layer=norm_layer, use_dropout=use_dropout)
         self.G_YX = Generator(input_nc, output_nc, norm_layer=norm_layer, use_dropout=use_dropout)
         self.D_X = Discriminator(input_nc, norm_layer=norm_layer)
@@ -39,7 +36,7 @@ class InstaGAN(object):
 
 
 class Generator(nn.Module):
-    def __init__(self, input_nc, output_nc, ngf=32, 
+    def __init__(self, input_nc, output_nc, ngf=64, 
                        norm_layer=nn.InstanceNorm2d, use_dropout=False,
                        n_blocks=6, padding_type='reflect', use_bias=False, use_deconv=False):
         super(Generator, self).__init__()
@@ -61,7 +58,7 @@ class Generator(nn.Module):
             mask_existence[0] = 1
         
         # encoder
-        """  
+
         n_masks = masks.size(1)
         feature_image = self.image_encoder(image)
 
@@ -71,7 +68,7 @@ class Generator(nn.Module):
                 continue
             mask = masks[:, i, :, :].unsqueeze(1)
             feature_masks_list.append(self.mask_encoder(mask))
-        #feature_masks = torch.cat(feature_masks_list, dim=1)
+
         feature_masks_sum = torch.zeros_like(feature_image)
         for feature_mask in feature_masks_list:
             feature_masks_sum += feature_mask
@@ -83,38 +80,10 @@ class Generator(nn.Module):
             if mask_existence[i] <= 0:
                 masks_out[:, i, :, :] = masks[:, i, :, :].unsqueeze(1)
             else:
-                #feature_mask = feature_masks_list[i]
                 feature_for_decode_mask = torch.cat([feature_image, feature_mask, feature_masks_sum], dim=1)
                 masks_out[:, i, :, :] = (self.mask_decoder(feature_for_decode_mask)).unsqueeze(1)
-        #masks_out = torch.cat(masks_out, dim=1)
         out = torch.cat([image_out, masks_out], dim=1)
-        """
-
-        feature_image = self.image_encoder(image)
-        masks = masks[:, torch.where(mask_existence > 0)[0], :, :]
-        b, n_masks, h, w = masks.size()
-        masks_ = torch.reshape(masks, (b * n_masks, 1, h, w))
-
-        feature_masks = self.mask_encoder(masks_)     
-        b_n, c, h_, w_ = feature_masks.size()
-        feature_masks_sum = torch.sum(feature_masks, dim=0, keepdim=True)
-        #feature_masks_list = torch.split(feature_masks, 1, dim=0)
-
-
-
-        #decoder
-        #feature_for_decode_image = torch.cat([feature_image, sum_feature_masks], dim=1)
-        image_out = self.image_decoder(torch.cat([feature_image, feature_masks_sum], dim=1))
-        #masks_out = []
-        feature_image = feature_image.repeat(n_masks, 1, 1, 1)
-        feature_masks_sum = feature_masks_sum.repeat(n_masks, 1, 1, 1)
-        feature_for_decode_mask = torch.cat([feature_image,
-                                             feature_masks,
-                                             feature_masks_sum], dim=1)
-        masks_out = self.mask_decoder(feature_for_decode_mask)
-        masks_out = torch.reshape(masks_out, (b, n_masks, h, w))      
-        out = torch.cat([image_out, masks_out], dim=1)
-
+        
         return out
 
 
@@ -136,7 +105,7 @@ class Encoder(nn.Module):
             mult *= 2
         self.downsampling_conv_block = nn.Sequential(*self.downsampling_conv_block)
         self.resnet_block = nn.ModuleList([])
-        for i in range(n_blocks):
+        for _ in range(n_blocks):
             self.resnet_block.append(ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer,
                                               use_dropout=use_dropout, use_bias=use_bias))
         self.resnet_block = nn.Sequential(*self.resnet_block)
@@ -214,7 +183,7 @@ class MaskDecoder(nn.Module):
         return image
 
 class Discriminator(nn.Module):
-    def __init__(self, input_nc=3, ndf=32, n_layers=3, norm_layer=nn.BatchNorm2d, use_bias=False):
+    def __init__(self, input_nc=3, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d, use_bias=False):
         super(Discriminator, self).__init__()
         self.input_nc = input_nc
 
@@ -226,7 +195,6 @@ class Discriminator(nn.Module):
 
     def _get_feature_extractor(self, input_nc, ndf, n_layers, kw, padw, norm_layer, use_bias):
         model = [
-            # Use spectral normalization
             SpectralNorm(nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw)),
             nn.LeakyReLU(0.2, True)
         ]
@@ -236,7 +204,6 @@ class Discriminator(nn.Module):
             nf_mult_prev = nf_mult
             nf_mult = min(2 ** n, 8)
             model += [
-                # Use spectral normalization
                 SpectralNorm(nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=use_bias)),
                 norm_layer(ndf * nf_mult),
                 nn.LeakyReLU(0.2, True)
@@ -247,20 +214,17 @@ class Discriminator(nn.Module):
         nf_mult_prev = min(2 ** (n_layers-1), 8)
         nf_mult = min(2 ** n_layers, 8)
         model = [
-            # Use spectral normalization
             SpectralNorm(nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw)),
             norm_layer(ndf * nf_mult),
             nn.LeakyReLU(0.2, True)
         ]
-        # Use spectral normalization
         model += [SpectralNorm(nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw))]
         return nn.Sequential(*model)
 
 
     def forward(self, image_masks):
-        # split data
-        image = image_masks[:, :self.input_nc, :, :]  # (B, CX, W, H)
-        masks = image_masks[:, self.input_nc:, :, :]  # (B, CA, W, H)
+        image = image_masks[:, :self.input_nc, :, :]  
+        masks = image_masks[:, self.input_nc:, :, :]  
         mask_existence = (masks).mean(0).mean(-1).mean(-1)
         if mask_existence.sum() <= 0:
             mask_existence[0] = 1  # forward at least one segmentation
@@ -268,20 +232,15 @@ class Discriminator(nn.Module):
         # run feature extractor
         feature_image = self.image_encoder(image)
 
-        """
-        feature_masks = list()
+
+        feature_masks_list = list()
         for i in range(masks.size(1)):
             if mask_existence[i] > 0:  # skip empty segmentation
                 mask = masks[:, i, :, :].unsqueeze(1)
-                feature_masks.append(self.mask_encoder(mask))
-        feature_masks_sum = torch.sum(torch.stack(feature_masks), dim=0)  # aggregated set feature
-        """
-
-        masks = masks[:, torch.where(mask_existence > 0)[0], :, :]
-        b, n_masks, h, w = masks.size()
-        masks = torch.reshape(masks, (b * n_masks, 1, h, w))
-        feature_masks = self.mask_encoder(masks)     
-        feature_masks_sum = torch.sum(feature_masks, dim=0, keepdim=True)
+                feature_masks_list.append(self.mask_encoder(mask))
+        feature_masks_sum = torch.zeros_like(feature_image)
+        for feature_mask in feature_masks_list:
+            feature_masks_sum += feature_mask
 
         # run classifier
         feature = torch.cat([feature_image, feature_masks_sum], dim=1)

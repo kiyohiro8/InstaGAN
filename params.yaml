@@ -9,7 +9,7 @@ network:
   norm_layer: instance_norm
   use_dropout: False
   num_resblocks: 3
-  padding_type: replicate
+  padding_type: reflect
   use_bias: False
   use_deconv: False
 
@@ -21,7 +21,7 @@ training:
   lambda_Y: 10
   lambda_idt: 1
   lambda_ctx: 1
-  X_name: sheep
+  X_name: zebra
   Y_name: giraffe
   annotation_file: ./data/instances_train2017.json
   image_dir: ./data/train2017/
