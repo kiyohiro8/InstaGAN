@@ -20,21 +20,40 @@ To get COCO dataset, run get_dataset.py
 CAUTION: By this script, you will download a large amount of image data (> 18GB).
 
 ```
-python get_dataset.py
+$ python get_dataset.py
 ```
 
+After execution, a directory with the following structure will be created.
 
+```
+├── data
+│   ├── instances_train2017.json
+│   └── train2017
+           ├── 000000000009.jpg
+           ├── 000000000025.jpg
+           ├── ...
+```
 
 ## Train
 
 run train.py 
 
 ```
-python train.py params.yaml
+$ python train.py params.yaml
+```
+
+After execution, a directory with the following structure will be created to store the learning results.
+
+```
+├── result
+│   └── yymmdd_HHMM_[domain X]2[domain Y]
+           ├── params.json
+           ├── weights
+           └── samples
 ```
 
 ## Train from checkpoint
 
 ```
-python resume_train.py [path to checkpoint directory]
+$ python resume_train.py [path to checkpoint directory]
 ```
