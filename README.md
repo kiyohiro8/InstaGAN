@@ -16,7 +16,7 @@ Learning InstaGAN requires annotation information on a per-instance basis. In th
 
 ### Download COCO dataset
 
-To get COCO dataset, run get_dataset.py
+To get COCO dataset, run get_dataset.py  
 CAUTION: By this script, you will download a large amount of image data (> 18GB).
 
 ```
