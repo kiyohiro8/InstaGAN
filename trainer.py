@@ -216,17 +216,19 @@ class Trainer():
 
                     print(f"loss_D_X: {loss_D_X:.4f}, loss_D_Y: {loss_D_Y:.4f}, loss_G: {loss_G:.4f}")
 
-            # Save weights
-            #if epoch % 5 == 0:
-            torch.save(model.G_XY.state_dict(), f"{self.weight_dir}/{epoch}_{self.X_name}2{self.Y_name}.pth")
-            torch.save(model.G_YX.state_dict(), f"{self.weight_dir}/{epoch}_{self.Y_name}2{self.X_name}.pth")
-            torch.save(model.D_X.state_dict(), f"{self.weight_dir}/{epoch}_dis_{self.X_name}.pth")
-            torch.save(model.D_Y.state_dict(), f"{self.weight_dir}/{epoch}_dis_{self.Y_name}.pth")
-            torch.save(optimizer_G.state_dict(), f"{self.weight_dir}/{epoch}_opt_G.pth")
-            torch.save(optimizer_D_X.state_dict(), f"{self.weight_dir}/{epoch}_opt_D_{self.X_name}.pth")
-            torch.save(optimizer_D_Y.state_dict(), f"{self.weight_dir}/{epoch}_opt_D_{self.Y_name}.pth")
-
+            # Shuffle train data
             train_dataloader.dataset.shuffle()
+
+            # Save weights
+            if epoch % 5 == 0:
+                torch.save(model.G_XY.state_dict(), f"{self.weight_dir}/{epoch}_{self.X_name}2{self.Y_name}.pth")
+                torch.save(model.G_YX.state_dict(), f"{self.weight_dir}/{epoch}_{self.Y_name}2{self.X_name}.pth")
+                torch.save(model.D_X.state_dict(), f"{self.weight_dir}/{epoch}_dis_{self.X_name}.pth")
+                torch.save(model.D_Y.state_dict(), f"{self.weight_dir}/{epoch}_dis_{self.Y_name}.pth")
+                torch.save(optimizer_G.state_dict(), f"{self.weight_dir}/{epoch}_opt_G.pth")
+                torch.save(optimizer_D_X.state_dict(), f"{self.weight_dir}/{epoch}_opt_D_{self.X_name}.pth")
+                torch.save(optimizer_D_Y.state_dict(), f"{self.weight_dir}/{epoch}_opt_D_{self.Y_name}.pth")
+
 
             #
             # Generate sample images
