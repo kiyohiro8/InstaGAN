@@ -29,9 +29,9 @@ After execution, a checkpoint directory with the following structure will be cre
 ├── data
 │   ├── instances_train2017.json
 │   └── train2017
-           ├── 000000000009.jpg
-           ├── 000000000025.jpg
-           ├── ...
+│          ├── 000000000009.jpg
+│          ├── 000000000025.jpg
+│          ├── ...
 ```
 
 ## Train
@@ -47,9 +47,9 @@ After execution, a directory with the following structure will be created to sto
 ```
 ├── result
 │   └── yymmdd_HHMM_[domain X]2[domain Y]
-           ├── params.json
-           ├── weights
-           └── samples
+│          ├── params.json
+│          ├── weights
+│          └── samples
 ```
 
 ## Train from checkpoint
