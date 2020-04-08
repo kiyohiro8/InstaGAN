@@ -23,7 +23,7 @@ CAUTION: By this script, you will download a large amount of image data (> 18GB)
 $ python get_dataset.py
 ```
 
-After execution, a directory with the following structure will be created.
+After execution, a checkpoint directory with the following structure will be created.
 
 ```
 ├── data
