@@ -1,8 +1,4 @@
 
-common:
-  height: 200
-  width: 200
-
 network:
   input_channels: 3
   output_channels: 3
@@ -23,6 +19,9 @@ training:
   lambda_ctx: 1
   X_name: zebra
   Y_name: giraffe
+  image_size: 128
+  max_instances: 8
+  instances_per_once: 2
   annotation_file: ./data/instances_train2017.json
   image_dir: ./data/train2017/
   checkpoint_root: ./result/

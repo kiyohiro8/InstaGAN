@@ -30,9 +30,10 @@ class Trainer():
         self.X_name = training_params["X_name"]
         self.Y_name = training_params["Y_name"]
         self.image_dir = training_params["image_dir"]
+        self.image_size = training_params["image_size"]
         self.annotation_file = training_params["annotation_file"]
-        self.ins_max = 8
-        self.ins_per = 2
+        self.ins_max = training_params["max_instances"]
+        self.ins_per = training_params["instances_per_once"]
         self.checkpoint_root = training_params["checkpoint_root"]
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -63,8 +64,8 @@ class Trainer():
         model.cast_device(self.device)
 
         # construct dataloader
-        train_dataset = UnalignedImgMaskDataset(X_name=self.X_name, Y_name=self.Y_name, simple_resize=False,
-                                                image_dir=self.image_dir, annotation_file=self.annotation_file)
+        train_dataset = UnalignedImgMaskDataset(X_name=self.X_name, Y_name=self.Y_name, image_size=self.image_size, simple_resize=False,
+                                                max_instances=self.ins_max, image_dir=self.image_dir, annotation_file=self.annotation_file)
         train_dataloader = DataLoader(train_dataset, batch_size=1, num_workers=4) 
 
         # construct optimizers

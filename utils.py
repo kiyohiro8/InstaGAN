@@ -20,7 +20,7 @@ import torchvision.transforms as transforms
 
 
 class UnalignedImgMaskDataset(object):
-    def __init__(self, X_name, Y_name, image_dir, annotation_file, simple_resize=True, test_size=20):
+    def __init__(self, X_name, Y_name, image_dir, annotation_file, image_size, max_instances, simple_resize=True, test_size=20):
         # annotationsの読み込み
         # imageへのpathとマスク情報を格納した辞書のリストを作成
         self.coco = COCO(annotation_file)
@@ -48,15 +48,15 @@ class UnalignedImgMaskDataset(object):
         print(f"{len(self.Ids_Y)} images for {Y_name}.")
 
         self.image_dir = image_dir
-        self.max_instances = 4
-        self.image_size = 128
+        self.max_instances = max_instances
+        self.image_size = image_size
 
         # transformsの定義
         if simple_resize:
             self.spatial_transforms = [SimpleResize(image_size=self.image_size),
                                ToTensor()]
         else:
-            self.spatial_transforms = [ResizeRandomCrip(image_size=self.image_size),
+            self.spatial_transforms = [ResizeRandomCrop(image_size=self.image_size),
                             RandomFlip(),
                             ToTensor()]
 
@@ -68,10 +68,6 @@ class UnalignedImgMaskDataset(object):
         annotation_Y = self.coco.loadImgs(self.Ids_Y[idx])[0]
         image_X = Image.open(os.path.join(self.image_dir, annotation_X["file_name"]))
         image_Y = Image.open(os.path.join(self.image_dir, annotation_Y["file_name"]))
-        #image_X = imread(os.path.join(self.image_dir, annotation_X["file_name"]))
-        #image_Y = imread(os.path.join(self.image_dir, annotation_Y["file_name"]))
-        #image_X = np.transpose(image_X, (2, 0, 1))
-        #image_Y = np.transpose(image_Y, (2, 0, 1))
 
         image_id_X = annotation_X["id"]
         image_id_Y = annotation_Y["id"]
@@ -98,20 +94,6 @@ class UnalignedImgMaskDataset(object):
             for transform in self.spatial_transforms:
                 image_X, masks_X = transform(image_X, masks_X)
                 image_Y, masks_Y = transform(image_Y, masks_Y)
-        """
-        image_X = resize(image_X, output_shape=(self.image_size, self.image_size, 3))
-        masks_X = [resize(mask, output_shape=(self.image_size, self.image_size), anti_aliasing=False, preserve_range=True) for mask in masks_X]
-        image_Y = resize(image_Y, output_shape=(self.image_size, self.image_size, 3))
-        masks_Y = [resize(mask, output_shape=(self.image_size, self.image_size), anti_aliasing=False, preserve_range=True) for mask in masks_Y]
-
-        image_X = (torch.FloatTensor(image_X.copy()) - 0.5) * 2
-        masks_X = [torch.FloatTensor(mask.copy()) for mask in masks_X]
-        image_Y = (torch.FloatTensor(image_Y.copy()) - 0.5) * 2
-        masks_Y = [torch.FloatTensor(mask.copy()) for mask in masks_Y]
-        image_X = np.transpose(image_X, (2, 0, 1))
-        image_Y = np.transpose(image_Y, (2, 0, 1))
-        """
-
 
         mask_tensor_X = torch.zeros((self.max_instances, self.image_size, self.image_size))
         mask_tensor_Y = torch.zeros((self.max_instances, self.image_size, self.image_size))
@@ -178,7 +160,7 @@ class SimpleResize(object):
         return image, masks
     
 
-class ResizeRandomCrip(object):
+class ResizeRandomCrop(object):
     def __init__(self, image_size):
         self.image_size = image_size
 
@@ -186,17 +168,7 @@ class ResizeRandomCrip(object):
 
         image = resize(image, output_shape=(int(self.image_size*1.2), int(self.image_size*1.2), 3))
         masks = [resize(mask, output_shape=(int(self.image_size*1.2), int(self.image_size*1.2)), anti_aliasing=False, preserve_range=True) for mask in masks]
-        """
-        c, h, w = image.shape
-        areas = [np.sum(mask) for mask in masks]
-        if h < w:
-            output_shape = (3, self.image_size, int(w * self.image_size / h))
-        else:
-            output_shape = (3, int(h * self.image_size / w), self.image_size)
-        image = resize(image, output_shape=output_shape)
-        masks = [resize(mask, output_shape=(1,)+output_shape[1:], anti_aliasing=False, preserve_range=True) for mask in masks]
-        #area_ratio = [image.shape[1] * image.shape[2] / h / w * area for area in areas]
-        """
+
         th = np.random.randint(0, 1.2*self.image_size - self.image_size)
         tw = np.random.randint(0, 1.2*self.image_size - self.image_size)
 
