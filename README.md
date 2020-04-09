@@ -42,7 +42,7 @@ run train.py
 $ python train.py params.yaml
 ```
 
-After execution, a directory with the following structure will be created to store the learning results.
+After execution, a checkpoint directory with the following structure will be created to store the learning results.
 
 ```
 ├── result
