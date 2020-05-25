@@ -1,5 +1,5 @@
 # Pytorch-InstaGAN
-Pytorch implementation of InstaGAN (https://openreview.net/pdf?id=ryxwJhC9YX)
+Unofficial re-implementation of InstaGAN (https://openreview.net/pdf?id=ryxwJhC9YX) with PyTorch
 
 ![](https://github.com/kiyohiro8/InstaGAN/blob/master/samples/zebra2giraffe.png)
 
